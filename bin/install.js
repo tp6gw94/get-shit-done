@@ -67,6 +67,7 @@ const hasCopilot = args.includes('--copilot');
 const hasAntigravity = args.includes('--antigravity');
 const hasCursor = args.includes('--cursor');
 const hasWindsurf = args.includes('--windsurf');
+const hasKiro = args.includes('--kiro');
 const hasSdk = args.includes('--sdk');
 const hasBoth = args.includes('--both'); // Legacy flag, keeps working
 const hasAll = args.includes('--all');
@@ -75,7 +76,7 @@ const hasUninstall = args.includes('--uninstall') || args.includes('-u');
 // Runtime selection - can be set by flags or interactive prompt
 let selectedRuntimes = [];
 if (hasAll) {
-  selectedRuntimes = ['claude', 'opencode', 'gemini', 'codex', 'copilot', 'antigravity', 'cursor', 'windsurf'];
+  selectedRuntimes = ['claude', 'opencode', 'gemini', 'codex', 'copilot', 'antigravity', 'cursor', 'windsurf', 'kiro'];
 } else if (hasBoth) {
   selectedRuntimes = ['claude', 'opencode'];
 } else {
@@ -87,6 +88,7 @@ if (hasAll) {
   if (hasAntigravity) selectedRuntimes.push('antigravity');
   if (hasCursor) selectedRuntimes.push('cursor');
   if (hasWindsurf) selectedRuntimes.push('windsurf');
+  if (hasKiro) selectedRuntimes.push('kiro');
 }
 
 // WSL + Windows Node.js detection
@@ -132,6 +134,7 @@ function getDirName(runtime) {
   if (runtime === 'antigravity') return '.agent';
   if (runtime === 'cursor') return '.cursor';
   if (runtime === 'windsurf') return '.windsurf';
+  if (runtime === 'kiro') return '.kiro';
   return '.claude';
 }
 
@@ -161,6 +164,7 @@ function getConfigDirFromHome(runtime, isGlobal) {
   }
   if (runtime === 'cursor') return "'.cursor'";
   if (runtime === 'windsurf') return "'.windsurf'";
+  if (runtime === 'kiro') return "'.kiro'";
   return "'.claude'";
 }
 
@@ -267,6 +271,17 @@ function getGlobalDir(runtime, explicitDir = null) {
       return expandTilde(process.env.WINDSURF_CONFIG_DIR);
     }
     return path.join(os.homedir(), '.windsurf');
+  }
+
+  if (runtime === 'kiro') {
+    // Kiro: --config-dir > KIRO_CONFIG_DIR > ~/.kiro
+    if (explicitDir) {
+      return expandTilde(explicitDir);
+    }
+    if (process.env.KIRO_CONFIG_DIR) {
+      return expandTilde(process.env.KIRO_CONFIG_DIR);
+    }
+    return path.join(os.homedir(), '.kiro');
   }
 
 
@@ -760,6 +775,235 @@ function extractFrontmatterField(frontmatter, fieldName) {
   const match = frontmatter.match(regex);
   if (!match) return null;
   return match[1].trim().replace(/^['"]|['"]$/g, '');
+}
+
+// --- Kiro converters ---
+// Kiro CLI uses a unique agent format: .json (config) + .md (prompt).
+// Config lives in .kiro/ (local) and ~/.kiro/ (global).
+// Skills live in .kiro/skills/<name>/SKILL.md (YAML frontmatter with name + description).
+
+// Tool name mapping from Claude Code to Kiro CLI
+const claudeToKiroTools = {
+  Read: 'fs_read',
+  Write: 'fs_write',
+  Edit: 'fs_write',
+  Bash: 'execute_bash',
+  Grep: 'grep',
+  Glob: 'glob',
+  Task: 'use_subagent',
+  WebSearch: 'web_search',
+  WebFetch: 'web_fetch',
+  TodoWrite: 'todo_list',
+  AskUserQuestion: null,
+  SlashCommand: null,
+};
+
+/**
+ * Convert a Claude Code tool name to Kiro CLI format
+ * @returns {string|null} Kiro tool name, or null if tool should be excluded
+ */
+function convertKiroToolName(claudeTool) {
+  if (claudeTool in claudeToKiroTools) {
+    return claudeToKiroTools[claudeTool];
+  }
+  // MCP tools keep their format (Kiro supports MCP)
+  if (claudeTool.startsWith('mcp__')) {
+    return claudeTool;
+  }
+  return claudeTool;
+}
+
+function convertSlashCommandsToKiroSkillMentions(content) {
+  return content.replace(/gsd:/gi, 'gsd-');
+}
+
+function convertClaudeToKiroMarkdown(content) {
+  let converted = convertSlashCommandsToKiroSkillMentions(content);
+  // Replace tool name references in body text
+  converted = converted.replace(/\bBash\(/g, 'execute_bash(');
+  converted = converted.replace(/\bEdit\(/g, 'fs_write(');
+  converted = converted.replace(/\bRead\(/g, 'fs_read(');
+  converted = converted.replace(/\bWrite\(/g, 'fs_write(');
+  converted = converted.replace(/\bTask\(/g, 'use_subagent(');
+  converted = converted.replace(/\bTodoWrite\(/g, 'todo_list(');
+  converted = converted.replace(/\bWebSearch\(/g, 'web_search(');
+  converted = converted.replace(/\bWebFetch\(/g, 'web_fetch(');
+  converted = converted.replace(/\bAskUserQuestion\b/g, 'conversational prompting');
+  converted = converted.replace(/\$ARGUMENTS\b/g, '{{GSD_ARGS}}');
+  // Replace project-level Claude conventions with Kiro equivalents
+  converted = converted.replace(/`\.\/CLAUDE\.md`/g, '`.kiro/steering/`');
+  converted = converted.replace(/\.\/CLAUDE\.md/g, '.kiro/steering/');
+  converted = converted.replace(/`CLAUDE\.md`/g, '`.kiro/steering/`');
+  converted = converted.replace(/\bCLAUDE\.md\b/g, '.kiro/steering/');
+  converted = converted.replace(/\.claude\/skills\//g, '.kiro/skills/');
+  // Catch ~/.claude without trailing slash (e.g. "configDir = ~/.claude")
+  // The with-slash variants are already handled by install()'s path replacement
+  converted = converted.replace(/~\/\.claude\b/g, '~/.kiro');
+  // Remove Claude Code-specific bug workarounds before brand replacement
+  converted = converted.replace(/\*\*Known Claude Code bug \(classifyHandoffIfNeeded\):\*\*[^\n]*\n/g, '');
+  converted = converted.replace(/- \*\*classifyHandoffIfNeeded false failure:\*\*[^\n]*\n/g, '');
+  // Replace "Claude Code" brand references with "Kiro"
+  converted = converted.replace(/\bClaude Code\b/g, 'Kiro');
+  // Convert Claude Task() subagent parameters to Kiro use_subagent parameters
+  converted = converted.replace(/subagent_type="/g, 'agent_name="');
+  converted = converted.replace(/^\s*model="[^"]*",?\s*\n/gm, '');
+  converted = converted.replace(/^\s*isolation="[^"]*",?\s*\n/gm, '');
+  converted = converted.replace(/(\s+)prompt="/g, '$1query="');
+  return converted;
+}
+
+function getKiroSkillAdapterHeader(skillName) {
+  return `<kiro_skill_adapter>
+## A. Skill Invocation
+- This skill is invoked when the user mentions \`${skillName}\` or describes a task matching this skill.
+- Treat all user text after the skill mention as \`{{GSD_ARGS}}\`.
+- If no arguments are present, treat \`{{GSD_ARGS}}\` as empty.
+
+## B. User Prompting
+When the workflow needs user input, prompt the user conversationally:
+- Present options as a numbered list in your response text
+- Ask the user to reply with their choice
+- For multi-select, ask for comma-separated numbers
+
+## C. Tool Usage
+Use these Kiro tools when executing GSD workflows:
+- \`execute_bash\` for running commands (terminal operations)
+- \`fs_write\` with str_replace for editing existing files
+- \`fs_read\`, \`fs_write\`, \`glob\`, \`grep\`, \`use_subagent\`, \`web_search\`, \`web_fetch\`, \`todo_list\` as needed
+
+## D. Subagent Spawning
+When the workflow needs to spawn a subagent, use the \`use_subagent\` tool:
+- Set \`agent_name\` to the GSD agent (e.g., "gsd-executor", "gsd-planner", "gsd-verifier")
+- Set \`query\` to the full task description including file paths to read
+- Set \`relevant_context\` for additional context
+- Up to 4 subagents can run in parallel for independent tasks
+- Do NOT include \`model\` or \`isolation\` parameters — Kiro handles these automatically
+</kiro_skill_adapter>`;
+}
+
+function convertClaudeCommandToKiroSkill(content, skillName) {
+  const converted = convertClaudeToKiroMarkdown(content);
+  const { frontmatter, body } = extractFrontmatterAndBody(converted);
+  let description = `Run GSD workflow ${skillName}.`;
+  if (frontmatter) {
+    const maybeDescription = extractFrontmatterField(frontmatter, 'description');
+    if (maybeDescription) {
+      description = maybeDescription;
+    }
+  }
+  description = toSingleLine(description);
+  const shortDescription = description.length > 180 ? `${description.slice(0, 177)}...` : description;
+  const adapter = getKiroSkillAdapterHeader(skillName);
+
+  return `---\nname: ${yamlIdentifier(skillName)}\ndescription: ${yamlQuote(shortDescription)}\n---\n\n${adapter}\n\n${body.trimStart()}`;
+}
+
+/**
+ * Convert Claude Code agent markdown to Kiro agent format.
+ * Kiro agents require TWO files: .json (config with tools) and .md (prompt).
+ * Returns { json: object|null, md: string }.
+ */
+function convertClaudeAgentToKiroAgent(content) {
+  let converted = convertClaudeToKiroMarkdown(content);
+  const { frontmatter, body } = extractFrontmatterAndBody(converted);
+  if (!frontmatter) return { json: null, md: converted };
+
+  const name = extractFrontmatterField(frontmatter, 'name') || 'unknown';
+  const description = extractFrontmatterField(frontmatter, 'description') || '';
+  const toolsRaw = extractFrontmatterField(frontmatter, 'tools') || '';
+
+  // Map Claude tool names to Kiro tool names
+  const kiroTools = toolsRaw
+    .split(/,\s*/)
+    .map(t => t.trim())
+    .filter(Boolean)
+    .map(t => convertKiroToolName(t))
+    .filter(t => t !== null);
+
+  // Ensure essential tools are present
+  const essentialTools = ['fs_read', 'fs_write', 'execute_bash', 'grep', 'glob'];
+  for (const tool of essentialTools) {
+    if (!kiroTools.includes(tool)) kiroTools.push(tool);
+  }
+
+  // Deduplicate tools (e.g. Write and Edit both map to fs_write)
+  const uniqueTools = [...new Set(kiroTools)];
+
+  const agentJson = {
+    name: name,
+    description: toSingleLine(description),
+    tools: ['*'],
+    allowedTools: ['@builtin'],
+    resources: [],  // populated at install time with correct absolute/relative path
+    includeMcpJson: true,
+  };
+
+  // If agent has use_subagent, add toolsSettings for subagent delegation
+  if (uniqueTools.includes('use_subagent')) {
+    agentJson.toolsSettings = {
+      subagent: { availableAgents: ['gsd-*'], trustedAgents: ['gsd-*'] },
+    };
+  }
+
+  // The .md file is just the body content (no frontmatter)
+  return { json: agentJson, md: body.trimStart() };
+}
+
+/**
+ * Copy Claude commands as Kiro skills — one folder per skill with SKILL.md.
+ * Mirrors copyCommandsAsCursorSkills but uses Kiro converters.
+ */
+function copyCommandsAsKiroSkills(srcDir, skillsDir, prefix, pathPrefix, runtime) {
+  if (!fs.existsSync(srcDir)) {
+    return;
+  }
+
+  fs.mkdirSync(skillsDir, { recursive: true });
+
+  // Remove previous GSD Kiro skills to avoid stale command skills
+  const existing = fs.readdirSync(skillsDir, { withFileTypes: true });
+  for (const entry of existing) {
+    if (entry.isDirectory() && entry.name.startsWith(`${prefix}-`)) {
+      fs.rmSync(path.join(skillsDir, entry.name), { recursive: true });
+    }
+  }
+
+  function recurse(currentSrcDir, currentPrefix) {
+    const entries = fs.readdirSync(currentSrcDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const srcPath = path.join(currentSrcDir, entry.name);
+      if (entry.isDirectory()) {
+        recurse(srcPath, `${currentPrefix}-${entry.name}`);
+        continue;
+      }
+
+      if (!entry.name.endsWith('.md')) {
+        continue;
+      }
+
+      const baseName = entry.name.replace('.md', '');
+      const skillName = `${currentPrefix}-${baseName}`;
+      const skillDir = path.join(skillsDir, skillName);
+      fs.mkdirSync(skillDir, { recursive: true });
+
+      let content = fs.readFileSync(srcPath, 'utf8');
+      const globalClaudeRegex = /~\/\.claude\//g;
+      const globalClaudeHomeRegex = /\$HOME\/\.claude\//g;
+      const localClaudeRegex = /\.\/\.claude\//g;
+      const kiroDirRegex = /~\/\.kiro\//g;
+      content = content.replace(globalClaudeRegex, pathPrefix);
+      content = content.replace(globalClaudeHomeRegex, pathPrefix);
+      content = content.replace(localClaudeRegex, `./${getDirName(runtime)}/`);
+      content = content.replace(kiroDirRegex, pathPrefix);
+      content = processAttribution(content, getCommitAttribution(runtime));
+      content = convertClaudeCommandToKiroSkill(content, skillName);
+
+      fs.writeFileSync(path.join(skillDir, 'SKILL.md'), content);
+    }
+  }
+
+  recurse(srcDir, prefix);
 }
 
 // Tool name mapping from Claude Code to Cursor CLI
@@ -3040,6 +3284,7 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime, isCommand
   const isAntigravity = runtime === 'antigravity';
   const isCursor = runtime === 'cursor';
   const isWindsurf = runtime === 'windsurf';
+  const isKiro = runtime === 'kiro';
   const dirName = getDirName(runtime);
 
   // Clean install: remove existing destination to prevent orphaned files
@@ -3102,6 +3347,9 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime, isCommand
       } else if (isWindsurf) {
         content = convertClaudeToWindsurfMarkdown(content);
         fs.writeFileSync(destPath, content);
+      } else if (isKiro) {
+        content = convertClaudeToKiroMarkdown(content);
+        fs.writeFileSync(destPath, content);
       } else {
         fs.writeFileSync(destPath, content);
       }
@@ -3130,6 +3378,14 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime, isCommand
       jsContent = jsContent.replace(/\.claude\/skills\//g, '.windsurf/skills/');
       jsContent = jsContent.replace(/CLAUDE\.md/g, '.windsurf/rules/');
       jsContent = jsContent.replace(/\bClaude Code\b/g, 'Windsurf');
+      fs.writeFileSync(destPath, jsContent);
+    } else if (isKiro && (entry.name.endsWith('.cjs') || entry.name.endsWith('.js'))) {
+      // For Kiro, also convert Claude references in JS/CJS utility scripts
+      let jsContent = fs.readFileSync(srcPath, 'utf8');
+      jsContent = jsContent.replace(/gsd:/gi, 'gsd-');
+      jsContent = jsContent.replace(/\.claude\/skills\//g, '.kiro/skills/');
+      jsContent = jsContent.replace(/CLAUDE\.md/g, '.kiro/steering/');
+      jsContent = jsContent.replace(/\bClaude Code\b/g, 'Kiro');
       fs.writeFileSync(destPath, jsContent);
     } else {
       fs.copyFileSync(srcPath, destPath);
@@ -3304,6 +3560,7 @@ function uninstall(isGlobal, runtime = 'claude') {
   const isAntigravity = runtime === 'antigravity';
   const isCursor = runtime === 'cursor';
   const isWindsurf = runtime === 'windsurf';
+  const isKiro = runtime === 'kiro';
   const dirName = getDirName(runtime);
 
   // Get the target directory based on runtime and install type
@@ -3323,6 +3580,7 @@ function uninstall(isGlobal, runtime = 'claude') {
   if (runtime === 'antigravity') runtimeLabel = 'Antigravity';
   if (runtime === 'cursor') runtimeLabel = 'Cursor';
   if (runtime === 'windsurf') runtimeLabel = 'Windsurf';
+  if (runtime === 'kiro') runtimeLabel = 'Kiro';
 
   console.log(`  Uninstalling GSD from ${cyan}${runtimeLabel}${reset} at ${cyan}${locationLabel}${reset}\n`);
 
@@ -3349,8 +3607,8 @@ function uninstall(isGlobal, runtime = 'claude') {
       }
       console.log(`  ${green}✓${reset} Removed GSD commands from command/`);
     }
-  } else if (isCodex || isCursor || isWindsurf) {
-    // Codex/Cursor/Windsurf: remove skills/gsd-*/SKILL.md skill directories
+  } else if (isCodex || isCursor || isWindsurf || isKiro) {
+    // Codex/Cursor/Windsurf/Kiro: remove skills/gsd-*/SKILL.md skill directories
     const skillsDir = path.join(targetDir, 'skills');
     if (fs.existsSync(skillsDir)) {
       let skillCount = 0;
@@ -3503,13 +3761,17 @@ function uninstall(isGlobal, runtime = 'claude') {
     console.log(`  ${green}✓${reset} Removed get-shit-done/`);
   }
 
-  // 3. Remove GSD agents (gsd-*.md files only)
+  // 3. Remove GSD agents (gsd-*.md files only, plus gsd-*.json for Kiro)
   const agentsDir = path.join(targetDir, 'agents');
   if (fs.existsSync(agentsDir)) {
     const files = fs.readdirSync(agentsDir);
     let agentCount = 0;
     for (const file of files) {
       if (file.startsWith('gsd-') && file.endsWith('.md')) {
+        fs.unlinkSync(path.join(agentsDir, file));
+        agentCount++;
+      }
+      if (isKiro && file.startsWith('gsd-') && file.endsWith('.json')) {
         fs.unlinkSync(path.join(agentsDir, file));
         agentCount++;
       }
@@ -3919,6 +4181,7 @@ function writeManifest(configDir, runtime = 'claude') {
   const isAntigravity = runtime === 'antigravity';
   const isCursor = runtime === 'cursor';
   const isWindsurf = runtime === 'windsurf';
+  const isKiro = runtime === 'kiro';
   const gsdDir = path.join(configDir, 'get-shit-done');
   const commandsDir = path.join(configDir, 'commands', 'gsd');
   const opencodeCommandDir = path.join(configDir, 'command');
@@ -3930,7 +4193,7 @@ function writeManifest(configDir, runtime = 'claude') {
   for (const [rel, hash] of Object.entries(gsdHashes)) {
     manifest.files['get-shit-done/' + rel] = hash;
   }
-  if (!isOpencode && !isCodex && !isCopilot && !isAntigravity && !isCursor && !isWindsurf && fs.existsSync(commandsDir)) {
+  if (!isOpencode && !isCodex && !isCopilot && !isAntigravity && !isCursor && !isWindsurf && !isKiro && fs.existsSync(commandsDir)) {
     const cmdHashes = generateManifest(commandsDir);
     for (const [rel, hash] of Object.entries(cmdHashes)) {
       manifest.files['commands/gsd/' + rel] = hash;
@@ -3943,7 +4206,7 @@ function writeManifest(configDir, runtime = 'claude') {
       }
     }
   }
-  if ((isCodex || isCopilot || isAntigravity || isCursor || isWindsurf) && fs.existsSync(codexSkillsDir)) {
+  if ((isCodex || isCopilot || isAntigravity || isCursor || isWindsurf || isKiro) && fs.existsSync(codexSkillsDir)) {
     for (const skillName of listCodexSkillNames(codexSkillsDir)) {
       const skillRoot = path.join(codexSkillsDir, skillName);
       const skillHashes = generateManifest(skillRoot);
@@ -3955,6 +4218,9 @@ function writeManifest(configDir, runtime = 'claude') {
   if (fs.existsSync(agentsDir)) {
     for (const file of fs.readdirSync(agentsDir)) {
       if (file.startsWith('gsd-') && file.endsWith('.md')) {
+        manifest.files['agents/' + file] = fileHash(path.join(agentsDir, file));
+      }
+      if (isKiro && file.startsWith('gsd-') && file.endsWith('.json')) {
         manifest.files['agents/' + file] = fileHash(path.join(agentsDir, file));
       }
     }
@@ -4058,6 +4324,7 @@ function install(isGlobal, runtime = 'claude') {
   const isAntigravity = runtime === 'antigravity';
   const isCursor = runtime === 'cursor';
   const isWindsurf = runtime === 'windsurf';
+  const isKiro = runtime === 'kiro';
   const dirName = getDirName(runtime);
   const src = path.join(__dirname, '..');
 
@@ -4089,6 +4356,7 @@ function install(isGlobal, runtime = 'claude') {
   if (isAntigravity) runtimeLabel = 'Antigravity';
   if (isCursor) runtimeLabel = 'Cursor';
   if (isWindsurf) runtimeLabel = 'Windsurf';
+  if (isKiro) runtimeLabel = 'Kiro';
 
   console.log(`  Installing for ${cyan}${runtimeLabel}${reset} to ${cyan}${locationLabel}${reset}\n`);
 
@@ -4176,6 +4444,16 @@ function install(isGlobal, runtime = 'claude') {
     } else {
       failures.push('skills/gsd-*');
     }
+  } else if (isKiro) {
+    const skillsDir = path.join(targetDir, 'skills');
+    const gsdSrc = path.join(src, 'commands', 'gsd');
+    copyCommandsAsKiroSkills(gsdSrc, skillsDir, 'gsd', pathPrefix, runtime);
+    const installedSkillNames = listCodexSkillNames(skillsDir); // reuse — same dir structure
+    if (installedSkillNames.length > 0) {
+      console.log(`  ${green}✓${reset} Installed ${installedSkillNames.length} skills to skills/`);
+    } else {
+      failures.push('skills/gsd-*');
+    }
   } else {
     // Claude Code & Gemini: nested structure in commands/ directory
     const commandsDir = path.join(targetDir, 'commands');
@@ -4210,7 +4488,7 @@ function install(isGlobal, runtime = 'claude') {
     // Remove old GSD agents (gsd-*.md) before copying new ones
     if (fs.existsSync(agentsDest)) {
       for (const file of fs.readdirSync(agentsDest)) {
-        if (file.startsWith('gsd-') && file.endsWith('.md')) {
+        if (file.startsWith('gsd-') && (file.endsWith('.md') || file.endsWith('.json'))) {
           fs.unlinkSync(path.join(agentsDest, file));
         }
       }
@@ -4244,6 +4522,18 @@ function install(isGlobal, runtime = 'claude') {
           content = convertClaudeAgentToCursorAgent(content);
         } else if (isWindsurf) {
           content = convertClaudeAgentToWindsurfAgent(content);
+        } else if (isKiro) {
+          const result = convertClaudeAgentToKiroAgent(content);
+          if (result.json) {
+            const agentMdPath = path.join(agentsDest, entry.name);
+            result.json.prompt = `file://${agentMdPath}`;
+            // Use absolute skill path for global installs so skills resolve from any CWD
+            const skillsBase = path.join(targetDir, 'skills');
+            result.json.resources = [`skill://${skillsBase}/**/SKILL.md`];
+            const jsonName = entry.name.replace('.md', '.json');
+            fs.writeFileSync(path.join(agentsDest, jsonName), JSON.stringify(result.json, null, 2) + '\n');
+          }
+          content = result.md;
         }
         const destName = isCopilot ? entry.name.replace('.md', '.agent.md') : entry.name;
         fs.writeFileSync(path.join(agentsDest, destName), content);
@@ -4253,6 +4543,84 @@ function install(isGlobal, runtime = 'claude') {
       console.log(`  ${green}✓${reset} Installed agents`);
     } else {
       failures.push('agents');
+    }
+
+    // Generate gsd-orchestrator agent for Kiro (entry point for subagent delegation)
+    if (isKiro) {
+      const orchMdPath = path.join(agentsDest, 'gsd-orchestrator.md');
+      const orchJsonPath = path.join(agentsDest, 'gsd-orchestrator.json');
+      const orchMd = `<role>
+You are the GSD orchestrator for Kiro. You coordinate spec-driven development workflows by reading GSD skills and delegating ALL work to specialized GSD subagents.
+
+Your job: Read skill instructions, initialize state via \`gsd-tools.cjs\`, and delegate execution to the correct subagent. You NEVER execute plans, write code, verify work, or debug issues yourself.
+
+**CRITICAL: You are a coordinator, not an executor.**
+When a workflow says "execute", "plan", "verify", "research", or "debug" — you delegate that to the appropriate subagent. You do NOT perform these actions inline.
+</role>
+
+<project_context>
+Before starting any workflow, discover project context:
+
+**Project instructions:** Read \`.kiro/steering/\` if it exists in the working directory. Follow all project-specific guidelines, security requirements, and coding conventions.
+
+**Project skills:** Check \`.kiro/skills/\` directory if it exists:
+1. List available skills (subdirectories)
+2. Read \`SKILL.md\` for each skill relevant to the user's request
+3. Follow skill instructions exactly
+</project_context>
+
+<delegation_rules>
+**Mandatory delegation — never execute work yourself:**
+
+| Workflow step | Delegate to | agent_name |
+|---------------|-------------|------------|
+| Execute plans / write code / commit | Executor | \`gsd-executor\` |
+| Create implementation plans | Planner | \`gsd-planner\` |
+| Verify completed work against specs | Verifier | \`gsd-verifier\` |
+| Debug issues | Debugger | \`gsd-debugger\` |
+| Research phase requirements | Phase Researcher | \`gsd-phase-researcher\` |
+| Research project context | Project Researcher | \`gsd-project-researcher\` |
+| Synthesize research findings | Research Synthesizer | \`gsd-research-synthesizer\` |
+| Create project roadmaps | Roadmapper | \`gsd-roadmapper\` |
+| Review plans for quality | Plan Checker | \`gsd-plan-checker\` |
+
+**What you DO:**
+- Read skill instructions and follow the orchestration flow
+- Run \`gsd-tools.cjs\` commands for state management and initialization
+- Spawn subagents with \`use_subagent\` and collect their results
+- Report progress and results to the user
+
+**What you NEVER do:**
+- Write or edit source code
+- Run tests or build commands
+- Create PLAN.md, SUMMARY.md, or STATE.md files
+- Make git commits
+- Perform verification or debugging
+</delegation_rules>
+
+<subagent_spawning>
+Use \`use_subagent\` to delegate. Pass all necessary context in the query — each subagent gets a fresh context window.
+
+You can spawn up to 4 subagents in parallel for independent tasks.
+
+When a workflow provides \`<files_to_read>\` blocks or file paths, include them in the subagent query so the subagent knows what to read.
+</subagent_spawning>
+`;
+      const orchJson = {
+        name: 'gsd-orchestrator',
+        description: 'GSD orchestrator — run spec-driven development workflows. Mention any gsd skill (e.g. gsd-new-project, gsd-execute-phase) to start.',
+        prompt: `file://${orchMdPath}`,
+        tools: ['*'],
+        allowedTools: ['@builtin'],
+        toolsSettings: {
+          subagent: { availableAgents: ['gsd-*'], trustedAgents: ['gsd-*'] },
+        },
+        resources: [`skill://${path.join(targetDir, 'skills')}/**/SKILL.md`],
+        includeMcpJson: true,
+      };
+      fs.writeFileSync(orchMdPath, orchMd);
+      fs.writeFileSync(orchJsonPath, JSON.stringify(orchJson, null, 2) + '\n');
+      console.log(`  ${green}✓${reset} Generated gsd-orchestrator agent`);
     }
   }
 
@@ -4277,7 +4645,7 @@ function install(isGlobal, runtime = 'claude') {
     failures.push('VERSION');
   }
 
-  if (!isCodex && !isCopilot && !isCursor && !isWindsurf) {
+  if (!isCodex && !isCopilot && !isCursor && !isWindsurf && !isKiro) {
     // Write package.json to force CommonJS mode for GSD scripts
     // Prevents "require is not defined" errors when project has "type": "module"
     // Node.js walks up looking for package.json - this stops inheritance from project
@@ -4443,6 +4811,11 @@ function install(isGlobal, runtime = 'claude') {
     return { settingsPath: null, settings: null, statuslineCommand: null, runtime };
   }
 
+  if (isKiro) {
+    // Kiro uses skills — no config.toml, no settings.json hooks needed
+    return { settingsPath: null, settings: null, statuslineCommand: null, runtime };
+  }
+
   // Configure statusline and hooks in settings.json
   // Gemini and Antigravity use AfterTool instead of PostToolUse for post-tool hooks
   const postToolEvent = (runtime === 'gemini' || runtime === 'antigravity') ? 'AfterTool' : 'PostToolUse';
@@ -4578,8 +4951,9 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
   const isCopilot = runtime === 'copilot';
   const isCursor = runtime === 'cursor';
   const isWindsurf = runtime === 'windsurf';
+  const isKiro = runtime === 'kiro';
 
-  if (shouldInstallStatusline && !isOpencode && !isCodex && !isCopilot && !isCursor && !isWindsurf) {
+  if (shouldInstallStatusline && !isOpencode && !isCodex && !isCopilot && !isCursor && !isWindsurf && !isKiro) {
     settings.statusLine = {
       type: 'command',
       command: statuslineCommand
@@ -4588,7 +4962,7 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
   }
 
   // Write settings when runtime supports settings.json
-  if (!isCodex && !isCopilot && !isCursor && !isWindsurf) {
+  if (!isCodex && !isCopilot && !isCursor && !isWindsurf && !isKiro) {
     writeSettings(settingsPath, settings);
   }
 
@@ -4625,6 +4999,7 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
   if (runtime === 'copilot') program = 'Copilot';
   if (runtime === 'antigravity') program = 'Antigravity';
   if (runtime === 'cursor') program = 'Cursor';
+  if (runtime === 'kiro') program = 'Kiro';
 
   let command = '/gsd:new-project';
   if (runtime === 'opencode') command = '/gsd-new-project';
@@ -4632,6 +5007,16 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
   if (runtime === 'copilot') command = '/gsd-new-project';
   if (runtime === 'antigravity') command = '/gsd-new-project';
   if (runtime === 'cursor') command = 'gsd-new-project (mention the skill name)';
+  if (runtime === 'kiro') {
+    console.log(`
+  ${green}Done!${reset} Switch to the GSD orchestrator agent and mention a skill:
+    ${cyan}/agent swap gsd-orchestrator${reset}
+    then say: ${cyan}gsd-new-project${reset}
+
+  ${cyan}Join the community:${reset} https://discord.gg/gsd
+`);
+    return;
+  }
   console.log(`
   ${green}Done!${reset} Open a blank directory in ${program} and run ${cyan}${command}${reset}.
 
@@ -4782,9 +5167,10 @@ function promptRuntime(callback) {
     '5': 'copilot',
     '6': 'antigravity',
     '7': 'cursor',
-    '8': 'windsurf'
+    '8': 'windsurf',
+    '9': 'kiro'
   };
-  const allRuntimes = ['claude', 'opencode', 'gemini', 'codex', 'copilot', 'antigravity', 'cursor', 'windsurf'];
+  const allRuntimes = ['claude', 'opencode', 'gemini', 'codex', 'copilot', 'antigravity', 'cursor', 'windsurf', 'kiro'];
 
   console.log(`  ${yellow}Which runtime(s) would you like to install for?${reset}\n\n  ${cyan}1${reset}) Claude Code  ${dim}(~/.claude)${reset}
   ${cyan}2${reset}) OpenCode     ${dim}(~/.config/opencode)${reset} - open source, free models
@@ -4794,7 +5180,8 @@ function promptRuntime(callback) {
   ${cyan}6${reset}) Antigravity  ${dim}(~/.gemini/antigravity)${reset}
   ${cyan}7${reset}) Cursor       ${dim}(~/.cursor)${reset}
   ${cyan}8${reset}) Windsurf     ${dim}(~/.windsurf)${reset}
-  ${cyan}9${reset}) All
+  ${cyan}9${reset}) Kiro         ${dim}(~/.kiro)${reset}
+  ${cyan}10${reset}) All
 
   ${dim}Select multiple: 1,4,6 or 1 4 6${reset}
 `);
@@ -4805,7 +5192,7 @@ function promptRuntime(callback) {
     const input = answer.trim() || '1';
 
     // "All" shortcut
-    if (input === '9') {
+    if (input === '10') {
       callback(allRuntimes);
       return;
     }
@@ -4961,6 +5348,12 @@ if (process.env.GSD_TEST_MODE) {
     convertClaudeCommandToWindsurfSkill,
     convertClaudeAgentToWindsurfAgent,
     copyCommandsAsWindsurfSkills,
+    claudeToKiroTools,
+    convertKiroToolName,
+    convertClaudeToKiroMarkdown,
+    convertClaudeCommandToKiroSkill,
+    convertClaudeAgentToKiroAgent,
+    copyCommandsAsKiroSkills,
     writeManifest,
     reportLocalPatches,
     validateHookFields,
