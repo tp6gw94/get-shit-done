@@ -53,7 +53,31 @@ Phase: $ARGUMENTS
 Context files are resolved inside the workflow via `gsd-tools init execute-phase` and per-subagent `<files_to_read>` blocks.
 </context>
 
+<available_agent_types>
+Valid GSD subagent types (use exact names — do not fall back to 'general-purpose'):
+- gsd-executor — Executes implementation plans (code, tests, commits)
+- gsd-verifier — Validates built features against specs
+</available_agent_types>
+
 <process>
-Execute the execute-phase workflow from @~/.claude/get-shit-done/workflows/execute-phase.md end-to-end.
-Preserve all workflow gates (wave execution, checkpoint handling, verification, state updates, routing).
+## Orchestrator Steps (do these yourself)
+1. Initialize context via `gsd-tools.cjs init execute-phase`
+2. Parse $ARGUMENTS for phase number and flags (--wave, --gaps-only, --interactive)
+3. Discover plans in the phase directory, analyze dependencies, group into waves
+
+## DELEGATE — Spawn gsd-executor subagents
+4. For each wave, spawn gsd-executor subagent(s) for each plan (up to 4 in parallel)
+   - Pass the full plan path, workflow context from @~/.claude/get-shit-done/workflows/execute-phase.md, and any relevant <files_to_read> blocks
+   - Each executor gets a fresh context window — do NOT execute plans yourself
+5. Collect results from each executor, update STATE.md via gsd-tools
+
+## DELEGATE — Spawn gsd-verifier (after all waves complete)
+6. If verification is needed (no --interactive flag), spawn gsd-verifier to validate the phase
+   - Pass phase number, SUMMARY.md paths, and verification criteria
+
+## Orchestrator Steps (do these yourself)
+7. Update ROADMAP.md progress via gsd-tools
+8. Present results to user, offer next actions
+
+**Exception:** If `--interactive` flag is active, execute plans sequentially inline (no subagents) as documented in the workflow.
 </process>

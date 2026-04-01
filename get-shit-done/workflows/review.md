@@ -18,12 +18,14 @@ Check which AI CLIs are available on the system:
 command -v gemini >/dev/null 2>&1 && echo "gemini:available" || echo "gemini:missing"
 command -v claude >/dev/null 2>&1 && echo "claude:available" || echo "claude:missing"
 command -v codex >/dev/null 2>&1 && echo "codex:available" || echo "codex:missing"
+command -v kiro-cli >/dev/null 2>&1 && echo "kiro:available" || echo "kiro:missing"
 ```
 
 Parse flags from `$ARGUMENTS`:
 - `--gemini` → include Gemini
 - `--claude` → include Claude
 - `--codex` → include Codex
+- `--kiro` → include Kiro
 - `--all` → include all available
 - No flags → include all available
 
@@ -33,12 +35,13 @@ No external AI CLIs found. Install at least one:
 - gemini: https://github.com/google-gemini/gemini-cli
 - codex: https://github.com/openai/codex
 - claude: https://github.com/anthropics/claude-code
+- kiro-cli: https://kiro.dev
 
 Then run /gsd:review again.
 ```
 Exit.
 
-If only one CLI is the current runtime (e.g. running inside Claude), skip it for the review
+If only one CLI is the current runtime (e.g. running inside Claude or Kiro), skip it for the review
 to ensure independence. At least one DIFFERENT CLI must be available.
 </step>
 
@@ -131,6 +134,11 @@ claude -p "$(cat /tmp/gsd-review-prompt-{phase}.md)" --no-input 2>/dev/null > /t
 codex exec --skip-git-repo-check "$(cat /tmp/gsd-review-prompt-{phase}.md)" 2>/dev/null > /tmp/gsd-review-codex-{phase}.md
 ```
 
+**Kiro:**
+```bash
+KIRO_LOG_NO_COLOR=1 kiro-cli chat --no-interactive --trust-all-tools --wrap never "$(cat /tmp/gsd-review-prompt-{phase}.md)" 2>/dev/null > /tmp/gsd-review-kiro-{phase}.md
+```
+
 If a CLI fails, log the error and continue with remaining CLIs.
 
 Display progress:
@@ -150,7 +158,7 @@ Combine all review responses into `{phase_dir}/{padded_phase}-REVIEWS.md`:
 ```markdown
 ---
 phase: {N}
-reviewers: [gemini, claude, codex]
+reviewers: [gemini, claude, codex, kiro]
 reviewed_at: {ISO timestamp}
 plans_reviewed: [{list of PLAN.md files}]
 ---
@@ -172,6 +180,12 @@ plans_reviewed: [{list of PLAN.md files}]
 ## Codex Review
 
 {codex review content}
+
+---
+
+## Kiro Review
+
+{kiro review content}
 
 ---
 

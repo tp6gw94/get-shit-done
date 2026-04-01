@@ -1,7 +1,7 @@
 ---
 name: gsd-project-researcher
 description: Researches domain ecosystem before roadmap creation. Produces files in .planning/research/ consumed during roadmap creation. Spawned by /gsd:new-project or /gsd:new-milestone orchestrators.
-tools: Read, Write, Bash, Grep, Glob, WebSearch, WebFetch, mcp__context7__*, mcp__firecrawl__*, mcp__exa__*
+tools: Read, Write, Bash, Grep, Glob, WebSearch, WebFetch, mcp__context7__*, mcp__firecrawl__*, mcp__exa__*, mcp__github-grep__*
 color: cyan
 # hooks:
 #   PostToolUse:
@@ -88,7 +88,23 @@ For libraries not in Context7, changelogs, release notes, official announcements
 
 Use exact URLs (not search result pages). Check publication dates. Prefer /docs/ over marketing.
 
-### 3. WebSearch — Ecosystem Discovery
+### 3. GitHub Grep — Real-World Code Search
+
+Search over a million public GitHub repositories for real implementation patterns via `mcp__github-grep__searchGitHub`.
+
+**Best for:** Finding how real projects implement specific patterns, verifying library usage in production, discovering idiomatic code across the ecosystem.
+
+```
+mcp__github-grep__searchGitHub with query: "actual code pattern" (literal code, not keywords)
+```
+
+**Tips:**
+- Search for literal code patterns (e.g., `useState(`, `import X from`), not natural language
+- Use `useRegexp: true` with `(?s)` prefix for multi-line matching
+- Filter by `language`, `repo`, or `path` to narrow results
+- Combine with Context7 findings to validate recommended patterns against real usage
+
+### 4. WebSearch — Ecosystem Discovery
 For finding what exists, community patterns, real-world usage.
 
 **Query templates:**

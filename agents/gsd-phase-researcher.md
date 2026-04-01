@@ -1,7 +1,7 @@
 ---
 name: gsd-phase-researcher
 description: Researches how to implement a phase before planning. Produces RESEARCH.md consumed by gsd-planner. Spawned by /gsd:plan-phase orchestrator.
-tools: Read, Write, Bash, Grep, Glob, WebSearch, WebFetch, mcp__context7__*, mcp__firecrawl__*, mcp__exa__*
+tools: Read, Write, Bash, Grep, Glob, WebSearch, WebFetch, mcp__context7__*, mcp__firecrawl__*, mcp__exa__*, mcp__github-grep__*
 color: cyan
 # hooks:
 #   PostToolUse:
@@ -115,13 +115,16 @@ When researching "best library for X": find what the ecosystem actually uses, do
 |----------|------|---------|-------------|
 | 1st | Context7 | Library APIs, features, configuration, versions | HIGH |
 | 2nd | WebFetch | Official docs/READMEs not in Context7, changelogs | HIGH-MEDIUM |
-| 3rd | WebSearch | Ecosystem discovery, community patterns, pitfalls | Needs verification |
+| 3rd | GitHub Grep (`mcp__github-grep__searchGitHub`) | Real-world implementation patterns across 1M+ public repos | HIGH-MEDIUM |
+| 4th | WebSearch | Ecosystem discovery, community patterns, pitfalls | Needs verification |
 
 **Context7 flow:**
 1. `mcp__context7__resolve-library-id` with libraryName
 2. `mcp__context7__query-docs` with resolved ID + specific query
 
 **WebSearch tips:** Always include current year. Use multiple query variations. Cross-verify with authoritative sources.
+
+**GitHub Grep tips:** Search for literal code patterns, not keywords. Use `useRegexp: true` with `(?s)` for multi-line matching. Filter by `language`, `repo`, or `path` to narrow results.
 
 ## Enhanced Web Search (Brave API)
 

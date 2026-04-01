@@ -32,7 +32,25 @@ Phase: $ARGUMENTS (optional)
 Context files are resolved inside the workflow (`init verify-work`) and delegated via `<files_to_read>` blocks.
 </context>
 
+<available_agent_types>
+Valid GSD subagent types (use exact names — do not fall back to 'general-purpose'):
+- gsd-verifier — Validates built features against specs and runs UAT
+</available_agent_types>
+
 <process>
-Execute the verify-work workflow from @~/.claude/get-shit-done/workflows/verify-work.md end-to-end.
-Preserve all workflow gates (session management, test presentation, diagnosis, fix planning, routing).
+## Orchestrator Steps (do these yourself)
+1. Initialize context via `gsd-tools.cjs init verify-work`
+2. Parse $ARGUMENTS for phase number
+3. Check for active verification sessions
+
+## DELEGATE — Spawn gsd-verifier
+4. Spawn gsd-verifier with phase context
+   - Pass phase number, SUMMARY.md paths, VERIFICATION.md template, UAT criteria
+   - The verifier handles all testing, diagnosis, and gap identification
+   - Do NOT run tests or verify work yourself
+
+## Orchestrator Steps (do these yourself)
+5. Collect verifier results (UAT.md, any gap plans)
+6. If issues found: present diagnosed gaps and fix plans to user
+7. Offer to run `/gsd:execute-phase --gaps-only` for fixes
 </process>

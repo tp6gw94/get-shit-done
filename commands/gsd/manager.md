@@ -22,6 +22,14 @@ Designed for power users who want to parallelize work across phases from one ter
 **After:** User exits when done managing, or all phases complete and milestone lifecycle is suggested.
 </objective>
 
+<available_agent_types>
+Valid GSD subagent types (use exact names — do not fall back to 'general-purpose'):
+- gsd-planner — Creates implementation plans for phases
+- gsd-executor — Executes plans (code, tests, commits)
+- gsd-phase-researcher — Researches phase requirements
+- gsd-verifier — Validates completed phases
+</available_agent_types>
+
 <execution_context>
 @~/.claude/get-shit-done/workflows/manager.md
 @~/.claude/get-shit-done/references/ui-brand.md
@@ -34,6 +42,21 @@ Project context, phase list, dependencies, and recommendations are resolved insi
 </context>
 
 <process>
-Execute the manager workflow from @~/.claude/get-shit-done/workflows/manager.md end-to-end.
-Maintain the dashboard refresh loop until the user exits or all phases complete.
+## Orchestrator Steps (do these yourself)
+1. Initialize context via `gsd-tools.cjs init manager`
+2. Build and display phase dashboard with status indicators
+3. Recommend optimal next actions based on phase states
+
+## DELEGATE — Dispatch work via subagents
+4. When user selects an action, spawn the appropriate subagent:
+   - "Plan phase X" → invoke plan-phase skill (includes researcher + planner + checker pipeline)
+   - "Execute phase X" → invoke execute-phase skill (includes executor + verifier pipeline)
+   - "Verify phase X" → invoke verify-work skill (spawns gsd-verifier)
+   - "Research phase X" → spawn gsd-phase-researcher
+   - Discuss runs inline (lightweight, orchestrator handles)
+5. Collect subagent results, refresh dashboard
+
+## Orchestrator Steps (do these yourself)
+6. Loop: display updated dashboard → recommend next → dispatch
+7. Exit when user is done or all phases complete
 </process>

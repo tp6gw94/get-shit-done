@@ -1,7 +1,7 @@
 ---
 name: gsd-advisor-researcher
 description: Researches a single gray area decision and returns a structured comparison table with rationale. Spawned by discuss-phase advisor mode.
-tools: Read, Bash, Grep, Glob, WebSearch, WebFetch, mcp__context7__*
+tools: Read, Bash, Grep, Glob, WebSearch, WebFetch, mcp__context7__*, mcp__exa__*, mcp__github-grep__*
 color: cyan
 ---
 
@@ -83,12 +83,23 @@ Return EXACTLY this structure:
 | Priority | Tool | Use For | Trust Level |
 |----------|------|---------|-------------|
 | 1st | Context7 | Library APIs, features, configuration, versions | HIGH |
-| 2nd | WebFetch | Official docs/READMEs not in Context7, changelogs | HIGH-MEDIUM |
-| 3rd | WebSearch | Ecosystem discovery, community patterns, pitfalls | Needs verification |
+| 2nd | Exa (`mcp__exa__web_search_exa`) | Official docs, blog posts, ecosystem discovery, community patterns | HIGH-MEDIUM |
+| 3rd | Exa (`mcp__exa__get_code_context_exa`) | Code examples, API usage, library documentation, debugging help | HIGH-MEDIUM |
+| 4th | GitHub Grep (`mcp__github-grep__searchGitHub`) | Real-world implementation patterns across 1M+ public repos | HIGH-MEDIUM |
+| 5th | WebSearch | Fallback for general discovery when other results insufficient | Needs verification |
 
 **Context7 flow:**
 1. `mcp__context7__resolve-library-id` with libraryName
 2. `mcp__context7__query-docs` with resolved ID + specific query
+
+**Exa flow:**
+- `mcp__exa__web_search_exa` — describe the ideal page in natural language, not just keywords (e.g., "blog post comparing React state management libraries" not "React state")
+- `mcp__exa__get_code_context_exa` — use for specific code patterns, API syntax, or library usage examples
+- Follow up with `mcp__exa__crawling_exa` on best URLs if highlights are insufficient
+
+**GitHub Grep flow:**
+- `mcp__github-grep__searchGitHub` with literal code patterns (not keywords), use `useRegexp: true` for flexible matching
+- Filter by `language`, `repo`, or `path` to narrow results
 
 Keep research focused on the single gray area. Do not explore tangential topics.
 </tool_strategy>

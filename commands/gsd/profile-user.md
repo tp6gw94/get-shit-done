@@ -18,6 +18,11 @@ Generate a developer behavioral profile from session analysis (or questionnaire)
 Routes to the profile-user workflow which orchestrates the full flow: consent gate, session analysis or questionnaire fallback, profile generation, result display, and artifact selection.
 </objective>
 
+<available_agent_types>
+Valid GSD subagent types (use exact names — do not fall back to 'general-purpose'):
+- gsd-user-profiler — Analyzes developer sessions and generates behavioral profiles
+</available_agent_types>
+
 <execution_context>
 @~/.claude/get-shit-done/workflows/profile-user.md
 @~/.claude/get-shit-done/references/ui-brand.md
@@ -30,17 +35,20 @@ Flags from $ARGUMENTS:
 </context>
 
 <process>
-Execute the profile-user workflow end-to-end.
+## Orchestrator Steps (do these yourself)
+1. Initialize context and check for existing profile
+2. Parse $ARGUMENTS for flags (--questionnaire, --refresh)
+3. Run consent gate before session analysis
 
-The workflow handles all logic including:
-1. Initialization and existing profile detection
-2. Consent gate before session analysis
-3. Session scanning and data sufficiency checks
-4. Session analysis (profiler agent) or questionnaire fallback
-5. Cross-project split resolution
-6. Profile writing to USER-PROFILE.md
-7. Result display with report card and highlights
-8. Artifact selection (dev-preferences, CLAUDE.md sections)
-9. Sequential artifact generation
-10. Summary with refresh diff (if applicable)
+## DELEGATE — Spawn gsd-user-profiler
+4. Spawn gsd-user-profiler with session data or questionnaire mode
+   - Pass session logs, existing profile (if --refresh), and mode flags
+   - Profiler handles all analysis, scoring, and profile generation
+   - Do NOT analyze sessions or generate profiles yourself
+
+## Orchestrator Steps (do these yourself)
+5. Collect profiler results (USER-PROFILE.md)
+6. Display report card and highlights to user
+7. Offer artifact selection (dev-preferences, CLAUDE.md sections)
+8. If user selects artifacts: spawn gsd-user-profiler again for artifact generation
 </process>

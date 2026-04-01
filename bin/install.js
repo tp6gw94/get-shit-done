@@ -933,10 +933,15 @@ function convertClaudeAgentToKiroAgent(content) {
     name: name,
     description: toSingleLine(description),
     tools: ['*'],
-    allowedTools: ['@builtin'],
+    allowedTools: ['@builtin', '@git'],
     resources: [],  // populated at install time with correct absolute/relative path
     includeMcpJson: true,
   };
+
+  // Research agents with GitHub Grep get the full research tool set
+  if (toolsRaw.includes('mcp__github-grep__')) {
+    agentJson.allowedTools.push('@context7', '@exa', '@github-grep');
+  }
 
   // If agent has use_subagent, add toolsSettings for subagent delegation
   if (uniqueTools.includes('use_subagent')) {
@@ -4498,6 +4503,8 @@ function install(isGlobal, runtime = 'claude') {
     const agentEntries = fs.readdirSync(agentsSrc, { withFileTypes: true });
     for (const entry of agentEntries) {
       if (entry.isFile() && entry.name.endsWith('.md')) {
+        // gsd-orchestrator is Kiro-only (subagent delegation entry point)
+        if (entry.name === 'gsd-orchestrator.md' && !isKiro) continue;
         let content = fs.readFileSync(path.join(agentsSrc, entry.name), 'utf8');
         // Replace ~/.claude/ and $HOME/.claude/ as they are the source of truth in the repo
         const dirRegex = /~\/\.claude\//g;
@@ -4527,9 +4534,13 @@ function install(isGlobal, runtime = 'claude') {
           if (result.json) {
             const agentMdPath = path.join(agentsDest, entry.name);
             result.json.prompt = `file://${agentMdPath}`;
-            // Use absolute skill path for global installs so skills resolve from any CWD
+            // Relative paths resolve from the project CWD; absolute path ensures skills resolve for global installs
             const skillsBase = path.join(targetDir, 'skills');
-            result.json.resources = [`skill://${skillsBase}/**/SKILL.md`];
+            result.json.resources = [
+              `file://.kiro/steering/*.md`,
+              `skill://.kiro/skills/**/SKILL.md`,
+              `skill://${skillsBase}/**/SKILL.md`,
+            ];
             const jsonName = entry.name.replace('.md', '.json');
             fs.writeFileSync(path.join(agentsDest, jsonName), JSON.stringify(result.json, null, 2) + '\n');
           }
@@ -4545,83 +4556,6 @@ function install(isGlobal, runtime = 'claude') {
       failures.push('agents');
     }
 
-    // Generate gsd-orchestrator agent for Kiro (entry point for subagent delegation)
-    if (isKiro) {
-      const orchMdPath = path.join(agentsDest, 'gsd-orchestrator.md');
-      const orchJsonPath = path.join(agentsDest, 'gsd-orchestrator.json');
-      const orchMd = `<role>
-You are the GSD orchestrator for Kiro. You coordinate spec-driven development workflows by reading GSD skills and delegating ALL work to specialized GSD subagents.
-
-Your job: Read skill instructions, initialize state via \`gsd-tools.cjs\`, and delegate execution to the correct subagent. You NEVER execute plans, write code, verify work, or debug issues yourself.
-
-**CRITICAL: You are a coordinator, not an executor.**
-When a workflow says "execute", "plan", "verify", "research", or "debug" — you delegate that to the appropriate subagent. You do NOT perform these actions inline.
-</role>
-
-<project_context>
-Before starting any workflow, discover project context:
-
-**Project instructions:** Read \`.kiro/steering/\` if it exists in the working directory. Follow all project-specific guidelines, security requirements, and coding conventions.
-
-**Project skills:** Check \`.kiro/skills/\` directory if it exists:
-1. List available skills (subdirectories)
-2. Read \`SKILL.md\` for each skill relevant to the user's request
-3. Follow skill instructions exactly
-</project_context>
-
-<delegation_rules>
-**Mandatory delegation — never execute work yourself:**
-
-| Workflow step | Delegate to | agent_name |
-|---------------|-------------|------------|
-| Execute plans / write code / commit | Executor | \`gsd-executor\` |
-| Create implementation plans | Planner | \`gsd-planner\` |
-| Verify completed work against specs | Verifier | \`gsd-verifier\` |
-| Debug issues | Debugger | \`gsd-debugger\` |
-| Research phase requirements | Phase Researcher | \`gsd-phase-researcher\` |
-| Research project context | Project Researcher | \`gsd-project-researcher\` |
-| Synthesize research findings | Research Synthesizer | \`gsd-research-synthesizer\` |
-| Create project roadmaps | Roadmapper | \`gsd-roadmapper\` |
-| Review plans for quality | Plan Checker | \`gsd-plan-checker\` |
-
-**What you DO:**
-- Read skill instructions and follow the orchestration flow
-- Run \`gsd-tools.cjs\` commands for state management and initialization
-- Spawn subagents with \`use_subagent\` and collect their results
-- Report progress and results to the user
-
-**What you NEVER do:**
-- Write or edit source code
-- Run tests or build commands
-- Create PLAN.md, SUMMARY.md, or STATE.md files
-- Make git commits
-- Perform verification or debugging
-</delegation_rules>
-
-<subagent_spawning>
-Use \`use_subagent\` to delegate. Pass all necessary context in the query — each subagent gets a fresh context window.
-
-You can spawn up to 4 subagents in parallel for independent tasks.
-
-When a workflow provides \`<files_to_read>\` blocks or file paths, include them in the subagent query so the subagent knows what to read.
-</subagent_spawning>
-`;
-      const orchJson = {
-        name: 'gsd-orchestrator',
-        description: 'GSD orchestrator — run spec-driven development workflows. Mention any gsd skill (e.g. gsd-new-project, gsd-execute-phase) to start.',
-        prompt: `file://${orchMdPath}`,
-        tools: ['*'],
-        allowedTools: ['@builtin'],
-        toolsSettings: {
-          subagent: { availableAgents: ['gsd-*'], trustedAgents: ['gsd-*'] },
-        },
-        resources: [`skill://${path.join(targetDir, 'skills')}/**/SKILL.md`],
-        includeMcpJson: true,
-      };
-      fs.writeFileSync(orchMdPath, orchMd);
-      fs.writeFileSync(orchJsonPath, JSON.stringify(orchJson, null, 2) + '\n');
-      console.log(`  ${green}✓${reset} Generated gsd-orchestrator agent`);
-    }
   }
 
   // Copy CHANGELOG.md

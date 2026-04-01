@@ -41,7 +41,35 @@ Phase number: $ARGUMENTS (optional — auto-detects next unplanned phase if omit
 Normalize phase input in step 2 before any directory lookups.
 </context>
 
+<available_agent_types>
+Valid GSD subagent types (use exact names — do not fall back to 'general-purpose'):
+- gsd-phase-researcher — Researches domain context for a phase
+- gsd-planner — Creates detailed implementation plans (PLAN.md files)
+- gsd-plan-checker — Reviews plans for quality and completeness
+</available_agent_types>
+
 <process>
-Execute the plan-phase workflow from @~/.claude/get-shit-done/workflows/plan-phase.md end-to-end.
-Preserve all workflow gates (validation, research, planning, verification loop, routing).
+## Orchestrator Steps (do these yourself)
+1. Initialize context via `gsd-tools.cjs init plan-phase`
+2. Parse $ARGUMENTS for phase number and flags
+3. Validate phase exists in ROADMAP.md, check for existing plans
+
+## DELEGATE — Spawn gsd-phase-researcher (unless --skip-research)
+4. If research needed: spawn gsd-phase-researcher with phase context
+   - Pass ROADMAP.md phase description, CONTEXT.md if exists, any --prd file
+   - Collect RESEARCH.md output
+
+## DELEGATE — Spawn gsd-planner
+5. Spawn gsd-planner with all gathered context
+   - Pass phase info, RESEARCH.md (if produced), CONTEXT.md, workflow from @~/.claude/get-shit-done/workflows/plan-phase.md
+   - Collect PLAN.md files
+
+## DELEGATE — Spawn gsd-plan-checker (unless --skip-verify)
+6. Spawn gsd-plan-checker to verify plan quality
+   - Pass PLAN.md files and phase requirements
+   - If checker returns issues: re-spawn gsd-planner with feedback (max 2 iterations)
+
+## Orchestrator Steps (do these yourself)
+7. Present plan summary to user
+8. Update STATE.md via gsd-tools
 </process>

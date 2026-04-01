@@ -41,7 +41,41 @@ $ARGUMENTS
 Context files are resolved inside the workflow (`init quick`) and delegated via `<files_to_read>` blocks.
 </context>
 
+<available_agent_types>
+Valid GSD subagent types (use exact names — do not fall back to 'general-purpose'):
+- gsd-planner — Creates the quick task plan
+- gsd-executor — Executes the quick task plan
+- gsd-phase-researcher — Researches implementation approaches (only with --research flag)
+- gsd-plan-checker — Reviews plan quality (only with --full flag)
+- gsd-verifier — Validates execution results (only with --full flag)
+</available_agent_types>
+
 <process>
-Execute the quick workflow from @~/.claude/get-shit-done/workflows/quick.md end-to-end.
-Preserve all workflow gates (validation, task description, planning, execution, state updates, commits).
+## Orchestrator Steps (do these yourself)
+1. Initialize context via `gsd-tools.cjs init quick`
+2. Parse $ARGUMENTS for task description and flags (--full, --discuss, --research)
+3. If --discuss: run lightweight discussion inline to capture decisions in CONTEXT.md
+
+## DELEGATE — Spawn gsd-phase-researcher (only with --research flag)
+4. If --research active: spawn gsd-phase-researcher for focused research
+   - Collect findings for planner context
+
+## DELEGATE — Spawn gsd-planner (quick mode)
+5. Spawn gsd-planner with task description and any research/discussion context
+   - Planner creates PLAN.md in `.planning/quick/`
+
+## DELEGATE — Spawn gsd-plan-checker (only with --full flag)
+6. If --full active: spawn gsd-plan-checker to verify plan quality
+   - If issues: re-spawn gsd-planner with feedback (max 2 iterations)
+
+## DELEGATE — Spawn gsd-executor
+7. Spawn gsd-executor with the PLAN.md
+   - Executor handles code, tests, commits
+
+## DELEGATE — Spawn gsd-verifier (only with --full flag)
+8. If --full active: spawn gsd-verifier to validate results
+
+## Orchestrator Steps (do these yourself)
+9. Update STATE.md quick tasks table via gsd-tools
+10. Present results to user
 </process>

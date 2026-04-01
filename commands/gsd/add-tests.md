@@ -24,6 +24,11 @@ Analyzes implementation files, classifies them into TDD (unit), E2E (browser), o
 Output: Test files committed with message `test(phase-{N}): add unit and E2E tests from add-tests command`
 </objective>
 
+<available_agent_types>
+Valid GSD subagent types (use exact names — do not fall back to 'general-purpose'):
+- gsd-executor — Generates and runs tests based on phase specifications
+</available_agent_types>
+
 <execution_context>
 @~/.claude/get-shit-done/workflows/add-tests.md
 </execution_context>
@@ -36,6 +41,18 @@ Phase: $ARGUMENTS
 </context>
 
 <process>
-Execute the add-tests workflow from @~/.claude/get-shit-done/workflows/add-tests.md end-to-end.
-Preserve all workflow gates (classification approval, test plan approval, RED-GREEN verification, gap reporting).
+## Orchestrator Steps (do these yourself)
+1. Initialize context via `gsd-tools.cjs init add-tests`
+2. Parse $ARGUMENTS for phase number and additional instructions
+3. Gather phase artifacts: SUMMARY.md, CONTEXT.md, VERIFICATION.md
+
+## DELEGATE — Spawn gsd-executor
+4. Spawn gsd-executor with test generation context
+   - Pass phase artifacts, implementation file list, workflow from @~/.claude/get-shit-done/workflows/add-tests.md
+   - Executor handles file classification, test plan creation, RED-GREEN test generation, and commits
+   - Do NOT classify files or write tests yourself
+
+## Orchestrator Steps (do these yourself)
+5. Collect executor results (test files created, coverage summary)
+6. Present results and any gap reports to user
 </process>
